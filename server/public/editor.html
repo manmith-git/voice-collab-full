@@ -2,158 +2,276 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Editor</title>
-
-<!-- SOCKET.IO from your server -->
-<script src="/socket.io/socket.io.js"></script>
-
-<!-- YJS -->
-<script src="https://cdn.jsdelivr.net/npm/yjs@13.6.8/dist/yjs.js"></script>
-
-<!-- Y-WEBSOCKET -->
-<script src="https://cdn.jsdelivr.net/npm/y-websocket@1.5.0/dist/y-websocket.js"></script>
-
-<!-- MONACO (Stable Version) -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+<title>Editor - Diagnostic Mode</title>
 
 <style>
-html, body { height: 100%; margin: 0; padding: 0; }
-#editor { height: 100%; }
+html, body { 
+    height: 100%; 
+    margin: 0; 
+    padding: 0; 
+    font-family: Arial, sans-serif;
+}
+#status {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: #333;
+    color: #0f0;
+    padding: 10px;
+    font-family: monospace;
+    font-size: 12px;
+    z-index: 1000;
+    max-width: 300px;
+    border-radius: 4px;
+}
+#editor { 
+    height: 100%; 
+    width: 100%;
+}
+.error { color: #f00; }
+.success { color: #0f0; }
+.warning { color: #ff0; }
 </style>
 </head>
 
 <body>
+<div id="status">Loading...</div>
 <div id="editor"></div>
 
 <script>
+// Diagnostic logging
+function log(msg, type = 'info') {
+    const status = document.getElementById('status');
+    const color = type === 'error' ? 'error' : type === 'success' ? 'success' : type === 'warning' ? 'warning' : '';
+    status.innerHTML += `<div class="${color}">${new Date().toLocaleTimeString()}: ${msg}</div>`;
+    console.log(`[${type}]`, msg);
+}
+
+// Global error handler
+window.onerror = function(msg, url, line, col, error) {
+    log(`ERROR: ${msg} at ${url}:${line}:${col}`, 'error');
+    return false;
+};
+
+log('Page loaded', 'success');
+
 // Configuration
-const SERVER = window.location.origin; // Use current origin instead of hardcoded
+const SERVER = window.location.origin;
 const ROOM = new URLSearchParams(location.search).get("room") || "default";
+log(`Room: ${ROOM}`, 'info');
+log(`Server: ${SERVER}`, 'info');
 
-// Socket.IO setup
-const socket = io(SERVER);
-socket.emit("join-room", ROOM);
-
-// WebRTC setup
-const pc = new RTCPeerConnection({ 
-    iceServers: [{ urls: "stun:stun.l.google.com:19302" }] 
-});
-
-pc.ontrack = function(e) {
-    let audio = new Audio();
-    audio.srcObject = e.streams[0];
-    audio.play();
-};
-
-pc.onicecandidate = function(e) {
-    if (e.candidate) {
-        socket.emit("signal", { 
-            to: window.peerId, 
-            signal: { ice: e.candidate } 
-        });
-    }
-};
-
-socket.on("signal", async function(data) {
-    let from = data.from;
-    let signal = data.signal;
-    window.peerId = from;
-
-    if (signal.sdp) {
-        await pc.setRemoteDescription(signal.sdp);
-        if (signal.sdp.type === "offer") {
-            let ans = await pc.createAnswer();
-            await pc.setLocalDescription(ans);
-            socket.emit("signal", { 
-                to: from, 
-                signal: { sdp: ans } 
-            });
-        }
-    }
-
-    if (signal.ice) {
-        await pc.addIceCandidate(signal.ice);
-    }
-});
-
-socket.on("user-joined", async function(id) {
-    window.peerId = id;
-    let offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socket.emit("signal", { 
-        to: id, 
-        signal: { sdp: offer } 
+// Load scripts dynamically with error handling
+function loadScript(src, name) {
+    return new Promise((resolve, reject) => {
+        log(`Loading ${name}...`);
+        const script = document.createElement('script');
+        script.src = src;
+        script.onload = () => {
+            log(`${name} loaded ✓`, 'success');
+            resolve();
+        };
+        script.onerror = () => {
+            log(`${name} failed to load ✗`, 'error');
+            reject(new Error(`Failed to load ${name}`));
+        };
+        document.head.appendChild(script);
     });
-});
+}
 
-// Monaco Editor setup (SINGLE require.config)
-require.config({
-    paths: { 
-        vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs" 
-    }
-});
-
-require(["vs/editor/editor.main"], function() {
-    console.log("Monaco loaded successfully");
-    
-    // Create YJS document
-    const ydoc = new Y.Doc();
-    
-    // Determine WebSocket URL
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/yjs`;
-    
-    console.log("Connecting to YJS at:", wsUrl);
-    
-    // Create WebSocket provider - CORRECT namespace
-    const provider = new Y.WebsocketProvider(wsUrl, ROOM, ydoc);
-    
-    provider.on('status', event => {
-        console.log('YJS connection status:', event.status);
-    });
-    
-    const ytext = ydoc.getText("code");
-
-    // Create Monaco editor
-    const editor = monaco.editor.create(
-        document.getElementById("editor"),
-        { 
-            value: "", 
-            language: "javascript", 
-            theme: "vs-dark",
-            automaticLayout: true
-        }
-    );
-    
-    console.log("Monaco editor created");
-
-    // Sync YJS changes to Monaco
-    let isLocalChange = false;
-    
-    ytext.observe(function() {
-        if (isLocalChange) return;
+async function init() {
+    try {
+        // Load Socket.IO
+        await loadScript('/socket.io/socket.io.js', 'Socket.IO');
         
-        let txt = ytext.toString();
-        if (txt !== editor.getValue()) {
-            const position = editor.getPosition();
-            editor.setValue(txt);
-            if (position) {
-                editor.setPosition(position);
+        // Load YJS
+        await loadScript('https://cdn.jsdelivr.net/npm/yjs@13.6.8/dist/yjs.js', 'YJS');
+        
+        // Load Y-WebSocket
+        await loadScript('https://cdn.jsdelivr.net/npm/y-websocket@1.5.0/dist/y-websocket.js', 'Y-WebSocket');
+        
+        // Load Monaco Loader
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js', 'Monaco Loader');
+        
+        log('All libraries loaded', 'success');
+        
+        // Setup Socket.IO
+        log('Connecting Socket.IO...');
+        const socket = io(SERVER);
+        
+        socket.on('connect', () => {
+            log('Socket.IO connected ✓', 'success');
+            socket.emit("join-room", ROOM);
+        });
+        
+        socket.on('connect_error', (err) => {
+            log(`Socket.IO error: ${err.message}`, 'error');
+        });
+        
+        // WebRTC setup
+        const pc = new RTCPeerConnection({ 
+            iceServers: [{ urls: "stun:stun.l.google.com:19302" }] 
+        });
+        
+        pc.ontrack = function(e) {
+            log('Received audio track', 'success');
+            let audio = new Audio();
+            audio.srcObject = e.streams[0];
+            audio.play().catch(err => log(`Audio play error: ${err.message}`, 'warning'));
+        };
+        
+        pc.onicecandidate = function(e) {
+            if (e.candidate && window.peerId) {
+                socket.emit("signal", { 
+                    to: window.peerId, 
+                    signal: { ice: e.candidate } 
+                });
             }
+        };
+        
+        socket.on("signal", async function(data) {
+            try {
+                window.peerId = data.from;
+                
+                if (data.signal.sdp) {
+                    await pc.setRemoteDescription(data.signal.sdp);
+                    if (data.signal.sdp.type === "offer") {
+                        let ans = await pc.createAnswer();
+                        await pc.setLocalDescription(ans);
+                        socket.emit("signal", { 
+                            to: data.from, 
+                            signal: { sdp: ans } 
+                        });
+                    }
+                }
+                
+                if (data.signal.ice) {
+                    await pc.addIceCandidate(data.signal.ice);
+                }
+            } catch (err) {
+                log(`WebRTC error: ${err.message}`, 'error');
+            }
+        });
+        
+        socket.on("user-joined", async function(id) {
+            try {
+                log(`User joined: ${id}`, 'success');
+                window.peerId = id;
+                let offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                socket.emit("signal", { 
+                    to: id, 
+                    signal: { sdp: offer } 
+                });
+            } catch (err) {
+                log(`WebRTC offer error: ${err.message}`, 'error');
+            }
+        });
+        
+        // Setup Monaco
+        log('Setting up Monaco...');
+        
+        if (typeof require === 'undefined') {
+            throw new Error('Monaco require is not defined');
         }
-    });
+        
+        require.config({
+            paths: { 
+                vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs" 
+            }
+        });
+        
+        require(["vs/editor/editor.main"], function() {
+            log('Monaco loaded ✓', 'success');
+            
+            try {
+                // Create YJS document
+                const ydoc = new Y.Doc();
+                
+                // WebSocket URL
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${wsProtocol}//${window.location.host}/yjs`;
+                
+                log(`Connecting to YJS: ${wsUrl}`);
+                
+                // Create WebSocket provider
+                const provider = new Y.WebsocketProvider(wsUrl, ROOM, ydoc);
+                
+                provider.on('status', event => {
+                    log(`YJS status: ${event.status}`, event.status === 'connected' ? 'success' : 'warning');
+                });
+                
+                provider.on('connection-error', err => {
+                    log(`YJS connection error: ${err.message}`, 'error');
+                });
+                
+                const ytext = ydoc.getText("code");
+                
+                // Create Monaco editor
+                log('Creating Monaco editor...');
+                const editor = monaco.editor.create(
+                    document.getElementById("editor"),
+                    { 
+                        value: "// Type your code here...\n", 
+                        language: "javascript", 
+                        theme: "vs-dark",
+                        automaticLayout: true
+                    }
+                );
+                
+                log('Monaco editor created ✓', 'success');
+                
+                // Sync YJS changes to Monaco
+                let isLocalChange = false;
+                
+                ytext.observe(function() {
+                    if (isLocalChange) return;
+                    
+                    let txt = ytext.toString();
+                    if (txt !== editor.getValue()) {
+                        const position = editor.getPosition();
+                        editor.setValue(txt);
+                        if (position) {
+                            editor.setPosition(position);
+                        }
+                        log('Received remote update', 'success');
+                    }
+                });
+                
+                // Sync Monaco changes to YJS
+                editor.onDidChangeModelContent(function() {
+                    let v = editor.getValue();
+                    if (v !== ytext.toString()) {
+                        isLocalChange = true;
+                        ytext.delete(0, ytext.length);
+                        ytext.insert(0, v);
+                        isLocalChange = false;
+                    }
+                });
+                
+                // Hide status after 5 seconds if successful
+                setTimeout(() => {
+                    document.getElementById('status').style.opacity = '0.3';
+                }, 5000);
+                
+            } catch (err) {
+                log(`Editor setup error: ${err.message}`, 'error');
+            }
+        }, function(err) {
+            log(`Monaco require error: ${err}`, 'error');
+        });
+        
+    } catch (err) {
+        log(`Initialization error: ${err.message}`, 'error');
+    }
+}
 
-    // Sync Monaco changes to YJS
-    editor.onDidChangeModelContent(function() {
-        let v = editor.getValue();
-        if (v !== ytext.toString()) {
-            isLocalChange = true;
-            ytext.delete(0, ytext.length);
-            ytext.insert(0, v);
-            isLocalChange = false;
-        }
-    });
-});
+// Start initialization when DOM is ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    init();
+}
 </script>
 
 </body>
