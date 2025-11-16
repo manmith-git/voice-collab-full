@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8">
-<title>Editor - Diagnostic Mode</title>
+<title>Collaborative Code Editor</title>
 
 <style>
 html, body { 
@@ -38,6 +38,10 @@ html, body {
 <div id="status">Loading...</div>
 <div id="editor"></div>
 
+<!-- Load libraries from CDN first -->
+<script src="https://unpkg.com/yjs@13.6.18/dist/yjs.min.js"></script>
+<script src="https://unpkg.com/y-websocket@1.5.4/dist/y-websocket.min.js"></script>
+
 <script>
 // Diagnostic logging
 function log(msg, type = 'info') {
@@ -49,11 +53,18 @@ function log(msg, type = 'info') {
 
 // Global error handler
 window.onerror = function(msg, url, line, col, error) {
-    log(`ERROR: ${msg} at ${url}:${line}:${col}`, 'error');
+    log(`ERROR: ${msg}`, 'error');
     return false;
 };
 
 log('Page loaded', 'success');
+
+// Verify YJS loaded
+if (typeof Y === 'undefined') {
+    log('YJS failed to load!', 'error');
+} else {
+    log('YJS loaded ✓', 'success');
+}
 
 // Configuration
 const SERVER = window.location.origin;
@@ -61,7 +72,7 @@ const ROOM = new URLSearchParams(location.search).get("room") || "default";
 log(`Room: ${ROOM}`, 'info');
 log(`Server: ${SERVER}`, 'info');
 
-// Load scripts dynamically with error handling
+// Load scripts dynamically
 function loadScript(src, name) {
     return new Promise((resolve, reject) => {
         log(`Loading ${name}...`);
@@ -72,7 +83,7 @@ function loadScript(src, name) {
             resolve();
         };
         script.onerror = () => {
-            log(`${name} failed to load ✗`, 'error');
+            log(`${name} failed ✗`, 'error');
             reject(new Error(`Failed to load ${name}`));
         };
         document.head.appendChild(script);
@@ -84,16 +95,10 @@ async function init() {
         // Load Socket.IO
         await loadScript('/socket.io/socket.io.js', 'Socket.IO');
         
-        // Load YJS
-        await loadScript('https://cdn.jsdelivr.net/npm/yjs@13.6.8/dist/yjs.js', 'YJS');
-        
-        // Load Y-WebSocket
-        await loadScript('https://cdn.jsdelivr.net/npm/y-websocket@1.5.0/dist/y-websocket.js', 'Y-WebSocket');
-        
-        // Load Monaco Loader
-        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js', 'Monaco Loader');
-        
-        log('All libraries loaded', 'success');
+        // Check if YJS is available
+        if (typeof Y === 'undefined') {
+            throw new Error('YJS not loaded');
+        }
         
         // Setup Socket.IO
         log('Connecting Socket.IO...');
@@ -117,7 +122,7 @@ async function init() {
             log('Received audio track', 'success');
             let audio = new Audio();
             audio.srcObject = e.streams[0];
-            audio.play().catch(err => log(`Audio play error: ${err.message}`, 'warning'));
+            audio.play().catch(err => log(`Audio: ${err.message}`, 'warning'));
         };
         
         pc.onicecandidate = function(e) {
@@ -149,7 +154,7 @@ async function init() {
                     await pc.addIceCandidate(data.signal.ice);
                 }
             } catch (err) {
-                log(`WebRTC error: ${err.message}`, 'error');
+                log(`WebRTC: ${err.message}`, 'error');
             }
         });
         
@@ -164,16 +169,13 @@ async function init() {
                     signal: { sdp: offer } 
                 });
             } catch (err) {
-                log(`WebRTC offer error: ${err.message}`, 'error');
+                log(`WebRTC: ${err.message}`, 'error');
             }
         });
         
-        // Setup Monaco
-        log('Setting up Monaco...');
-        
-        if (typeof require === 'undefined') {
-            throw new Error('Monaco require is not defined');
-        }
+        // Load Monaco
+        log('Loading Monaco...');
+        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js', 'Monaco Loader');
         
         require.config({
             paths: { 
@@ -182,46 +184,50 @@ async function init() {
         });
         
         require(["vs/editor/editor.main"], function() {
-            log('Monaco loaded ✓', 'success');
+            log('Monaco ready ✓', 'success');
             
             try {
                 // Create YJS document
                 const ydoc = new Y.Doc();
+                log('YJS Doc created', 'success');
                 
                 // WebSocket URL
                 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsUrl = `${wsProtocol}//${window.location.host}/yjs`;
                 
-                log(`Connecting to YJS: ${wsUrl}`);
+                log(`Connecting YJS: ${wsUrl}`);
                 
                 // Create WebSocket provider
-                const provider = new Y.WebsocketProvider(wsUrl, ROOM, ydoc);
+                const provider = new window.WebsocketProvider(wsUrl, ROOM, ydoc);
                 
                 provider.on('status', event => {
-                    log(`YJS status: ${event.status}`, event.status === 'connected' ? 'success' : 'warning');
+                    log(`YJS: ${event.status}`, event.status === 'connected' ? 'success' : 'warning');
                 });
                 
-                provider.on('connection-error', err => {
-                    log(`YJS connection error: ${err.message}`, 'error');
+                provider.on('connection-error', (err) => {
+                    log(`YJS error: ${err}`, 'error');
                 });
                 
                 const ytext = ydoc.getText("code");
                 
                 // Create Monaco editor
-                log('Creating Monaco editor...');
+                log('Creating editor...');
                 const editor = monaco.editor.create(
                     document.getElementById("editor"),
                     { 
-                        value: "// Type your code here...\n", 
+                        value: "// Collaborative Code Editor\n// Room: " + ROOM + "\n\n", 
                         language: "javascript", 
                         theme: "vs-dark",
-                        automaticLayout: true
+                        automaticLayout: true,
+                        fontSize: 14,
+                        minimap: { enabled: false }
                     }
                 );
                 
-                log('Monaco editor created ✓', 'success');
+                log('Editor ready ✓', 'success');
+                log('System operational!', 'success');
                 
-                // Sync YJS changes to Monaco
+                // Sync YJS to Monaco
                 let isLocalChange = false;
                 
                 ytext.observe(function() {
@@ -234,11 +240,10 @@ async function init() {
                         if (position) {
                             editor.setPosition(position);
                         }
-                        log('Received remote update', 'success');
                     }
                 });
                 
-                // Sync Monaco changes to YJS
+                // Sync Monaco to YJS
                 editor.onDidChangeModelContent(function() {
                     let v = editor.getValue();
                     if (v !== ytext.toString()) {
@@ -249,24 +254,25 @@ async function init() {
                     }
                 });
                 
-                // Hide status after 5 seconds if successful
+                // Fade status after 3 seconds
                 setTimeout(() => {
-                    document.getElementById('status').style.opacity = '0.3';
-                }, 5000);
+                    document.getElementById('status').style.transition = 'opacity 1s';
+                    document.getElementById('status').style.opacity = '0.1';
+                }, 3000);
                 
             } catch (err) {
-                log(`Editor setup error: ${err.message}`, 'error');
+                log(`Setup error: ${err.message}`, 'error');
             }
         }, function(err) {
-            log(`Monaco require error: ${err}`, 'error');
+            log(`Monaco error: ${err}`, 'error');
         });
         
     } catch (err) {
-        log(`Initialization error: ${err.message}`, 'error');
+        log(`Init error: ${err.message}`, 'error');
     }
 }
 
-// Start initialization when DOM is ready
+// Start when DOM ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
 } else {
