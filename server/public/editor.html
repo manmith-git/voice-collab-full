@@ -9,20 +9,21 @@ html, body {
     height: 100%; 
     margin: 0; 
     padding: 0; 
-    font-family: Arial, sans-serif;
 }
 #status {
-    position: absolute;
+    position: fixed;
     top: 10px;
     left: 10px;
-    background: #333;
+    background: rgba(0,0,0,0.8);
     color: #0f0;
     padding: 10px;
     font-family: monospace;
-    font-size: 12px;
-    z-index: 1000;
+    font-size: 11px;
+    z-index: 10000;
     max-width: 300px;
     border-radius: 4px;
+    max-height: 200px;
+    overflow-y: auto;
 }
 #editor { 
     height: 100%; 
@@ -35,248 +36,234 @@ html, body {
 </head>
 
 <body>
-<div id="status">Loading...</div>
+<div id="status">Initializing...</div>
 <div id="editor"></div>
 
-<!-- Load libraries from CDN first -->
-<script src="https://unpkg.com/yjs@13.6.18/dist/yjs.min.js"></script>
-<script src="https://unpkg.com/y-websocket@1.5.4/dist/y-websocket.min.js"></script>
+<!-- Use importmap for ESM modules -->
+<script type="importmap">
+{
+  "imports": {
+    "yjs": "https://esm.sh/yjs@13.6.18",
+    "y-websocket": "https://esm.sh/y-websocket@1.5.4",
+    "lib0": "https://esm.sh/lib0@0.2.94"
+  }
+}
+</script>
 
-<script>
-// Diagnostic logging
+<script type="module">
+import * as Y from 'yjs';
+import { WebsocketProvider } from 'y-websocket';
+
+// Make available globally
+window.Y = Y;
+window.WebsocketProvider = WebsocketProvider;
+
+// Logging
 function log(msg, type = 'info') {
     const status = document.getElementById('status');
     const color = type === 'error' ? 'error' : type === 'success' ? 'success' : type === 'warning' ? 'warning' : '';
-    status.innerHTML += `<div class="${color}">${new Date().toLocaleTimeString()}: ${msg}</div>`;
+    status.innerHTML += `<div class="${color}">[${new Date().toLocaleTimeString()}] ${msg}</div>`;
     console.log(`[${type}]`, msg);
 }
 
-// Global error handler
-window.onerror = function(msg, url, line, col, error) {
+window.onerror = function(msg, url, line) {
     log(`ERROR: ${msg}`, 'error');
     return false;
 };
 
-log('Page loaded', 'success');
+log('✓ YJS modules loaded', 'success');
 
-// Verify YJS loaded
-if (typeof Y === 'undefined') {
-    log('YJS failed to load!', 'error');
-} else {
-    log('YJS loaded ✓', 'success');
-}
-
-// Configuration
 const SERVER = window.location.origin;
 const ROOM = new URLSearchParams(location.search).get("room") || "default";
+
 log(`Room: ${ROOM}`, 'info');
-log(`Server: ${SERVER}`, 'info');
 
-// Load scripts dynamically
-function loadScript(src, name) {
-    return new Promise((resolve, reject) => {
-        log(`Loading ${name}...`);
-        const script = document.createElement('script');
-        script.src = src;
-        script.onload = () => {
-            log(`${name} loaded ✓`, 'success');
-            resolve();
-        };
-        script.onerror = () => {
-            log(`${name} failed ✗`, 'error');
-            reject(new Error(`Failed to load ${name}`));
-        };
-        document.head.appendChild(script);
+// Load Socket.IO
+const socketScript = document.createElement('script');
+socketScript.src = '/socket.io/socket.io.js';
+socketScript.onload = () => {
+    log('✓ Socket.IO loaded', 'success');
+    initApp();
+};
+socketScript.onerror = () => {
+    log('✗ Socket.IO failed', 'error');
+};
+document.head.appendChild(socketScript);
+
+function initApp() {
+    // Socket.IO setup
+    const socket = io(SERVER);
+    
+    socket.on('connect', () => {
+        log('✓ Socket connected', 'success');
+        socket.emit("join-room", ROOM);
     });
-}
-
-async function init() {
-    try {
-        // Load Socket.IO
-        await loadScript('/socket.io/socket.io.js', 'Socket.IO');
-        
-        // Check if YJS is available
-        if (typeof Y === 'undefined') {
-            throw new Error('YJS not loaded');
+    
+    socket.on('connect_error', (err) => {
+        log(`Socket error: ${err.message}`, 'error');
+    });
+    
+    // WebRTC setup
+    const pc = new RTCPeerConnection({ 
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }] 
+    });
+    
+    pc.ontrack = function(e) {
+        log('✓ Audio track received', 'success');
+        const audio = new Audio();
+        audio.srcObject = e.streams[0];
+        audio.play().catch(err => log(`Audio: ${err.message}`, 'warning'));
+    };
+    
+    pc.onicecandidate = function(e) {
+        if (e.candidate && window.peerId) {
+            socket.emit("signal", { 
+                to: window.peerId, 
+                signal: { ice: e.candidate } 
+            });
         }
-        
-        // Setup Socket.IO
-        log('Connecting Socket.IO...');
-        const socket = io(SERVER);
-        
-        socket.on('connect', () => {
-            log('Socket.IO connected ✓', 'success');
-            socket.emit("join-room", ROOM);
-        });
-        
-        socket.on('connect_error', (err) => {
-            log(`Socket.IO error: ${err.message}`, 'error');
-        });
-        
-        // WebRTC setup
-        const pc = new RTCPeerConnection({ 
-            iceServers: [{ urls: "stun:stun.l.google.com:19302" }] 
-        });
-        
-        pc.ontrack = function(e) {
-            log('Received audio track', 'success');
-            let audio = new Audio();
-            audio.srcObject = e.streams[0];
-            audio.play().catch(err => log(`Audio: ${err.message}`, 'warning'));
-        };
-        
-        pc.onicecandidate = function(e) {
-            if (e.candidate && window.peerId) {
-                socket.emit("signal", { 
-                    to: window.peerId, 
-                    signal: { ice: e.candidate } 
-                });
-            }
-        };
-        
-        socket.on("signal", async function(data) {
-            try {
-                window.peerId = data.from;
-                
-                if (data.signal.sdp) {
-                    await pc.setRemoteDescription(data.signal.sdp);
-                    if (data.signal.sdp.type === "offer") {
-                        let ans = await pc.createAnswer();
-                        await pc.setLocalDescription(ans);
-                        socket.emit("signal", { 
-                            to: data.from, 
-                            signal: { sdp: ans } 
-                        });
-                    }
-                }
-                
-                if (data.signal.ice) {
-                    await pc.addIceCandidate(data.signal.ice);
-                }
-            } catch (err) {
-                log(`WebRTC: ${err.message}`, 'error');
-            }
-        });
-        
-        socket.on("user-joined", async function(id) {
-            try {
-                log(`User joined: ${id}`, 'success');
-                window.peerId = id;
-                let offer = await pc.createOffer();
-                await pc.setLocalDescription(offer);
-                socket.emit("signal", { 
-                    to: id, 
-                    signal: { sdp: offer } 
-                });
-            } catch (err) {
-                log(`WebRTC: ${err.message}`, 'error');
-            }
-        });
-        
-        // Load Monaco
-        log('Loading Monaco...');
-        await loadScript('https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js', 'Monaco Loader');
-        
-        require.config({
-            paths: { 
-                vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs" 
-            }
-        });
-        
-        require(["vs/editor/editor.main"], function() {
-            log('Monaco ready ✓', 'success');
+    };
+    
+    socket.on("signal", async function(data) {
+        try {
+            window.peerId = data.from;
             
-            try {
-                // Create YJS document
-                const ydoc = new Y.Doc();
-                log('YJS Doc created', 'success');
-                
-                // WebSocket URL
-                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${wsProtocol}//${window.location.host}/yjs`;
-                
-                log(`Connecting YJS: ${wsUrl}`);
-                
-                // Create WebSocket provider
-                const provider = new window.WebsocketProvider(wsUrl, ROOM, ydoc);
-                
-                provider.on('status', event => {
-                    log(`YJS: ${event.status}`, event.status === 'connected' ? 'success' : 'warning');
-                });
-                
-                provider.on('connection-error', (err) => {
-                    log(`YJS error: ${err}`, 'error');
-                });
-                
-                const ytext = ydoc.getText("code");
-                
-                // Create Monaco editor
-                log('Creating editor...');
-                const editor = monaco.editor.create(
-                    document.getElementById("editor"),
-                    { 
-                        value: "// Collaborative Code Editor\n// Room: " + ROOM + "\n\n", 
-                        language: "javascript", 
-                        theme: "vs-dark",
-                        automaticLayout: true,
-                        fontSize: 14,
-                        minimap: { enabled: false }
-                    }
-                );
-                
-                log('Editor ready ✓', 'success');
-                log('System operational!', 'success');
-                
-                // Sync YJS to Monaco
-                let isLocalChange = false;
-                
-                ytext.observe(function() {
-                    if (isLocalChange) return;
-                    
-                    let txt = ytext.toString();
-                    if (txt !== editor.getValue()) {
-                        const position = editor.getPosition();
-                        editor.setValue(txt);
-                        if (position) {
-                            editor.setPosition(position);
-                        }
-                    }
-                });
-                
-                // Sync Monaco to YJS
-                editor.onDidChangeModelContent(function() {
-                    let v = editor.getValue();
-                    if (v !== ytext.toString()) {
-                        isLocalChange = true;
-                        ytext.delete(0, ytext.length);
-                        ytext.insert(0, v);
-                        isLocalChange = false;
-                    }
-                });
-                
-                // Fade status after 3 seconds
-                setTimeout(() => {
-                    document.getElementById('status').style.transition = 'opacity 1s';
-                    document.getElementById('status').style.opacity = '0.1';
-                }, 3000);
-                
-            } catch (err) {
-                log(`Setup error: ${err.message}`, 'error');
+            if (data.signal.sdp) {
+                await pc.setRemoteDescription(data.signal.sdp);
+                if (data.signal.sdp.type === "offer") {
+                    const ans = await pc.createAnswer();
+                    await pc.setLocalDescription(ans);
+                    socket.emit("signal", { 
+                        to: data.from, 
+                        signal: { sdp: ans } 
+                    });
+                }
             }
-        }, function(err) {
-            log(`Monaco error: ${err}`, 'error');
-        });
-        
-    } catch (err) {
-        log(`Init error: ${err.message}`, 'error');
-    }
+            
+            if (data.signal.ice) {
+                await pc.addIceCandidate(data.signal.ice);
+            }
+        } catch (err) {
+            log(`WebRTC: ${err.message}`, 'error');
+        }
+    });
+    
+    socket.on("user-joined", async function(id) {
+        try {
+            log(`User joined: ${id.substring(0,8)}...`, 'success');
+            window.peerId = id;
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            socket.emit("signal", { 
+                to: id, 
+                signal: { sdp: offer } 
+            });
+        } catch (err) {
+            log(`WebRTC: ${err.message}`, 'error');
+        }
+    });
+    
+    // Load Monaco
+    log('Loading Monaco...', 'info');
+    const monacoScript = document.createElement('script');
+    monacoScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js';
+    monacoScript.onload = () => {
+        log('✓ Monaco loader ready', 'success');
+        initMonaco();
+    };
+    monacoScript.onerror = () => {
+        log('✗ Monaco failed', 'error');
+    };
+    document.head.appendChild(monacoScript);
 }
 
-// Start when DOM ready
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-} else {
-    init();
+function initMonaco() {
+    require.config({
+        paths: { vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs" }
+    });
+    
+    require(["vs/editor/editor.main"], function() {
+        log('✓ Monaco ready', 'success');
+        
+        try {
+            // YJS setup
+            const ydoc = new Y.Doc();
+            const ytext = ydoc.getText("code");
+            
+            // WebSocket provider
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${location.host}/yjs`;
+            
+            log(`Connecting to ${wsUrl}...`);
+            
+            const provider = new WebsocketProvider(wsUrl, ROOM, ydoc);
+            
+            provider.on('status', event => {
+                if (event.status === 'connected') {
+                    log('✓ YJS connected', 'success');
+                } else if (event.status === 'disconnected') {
+                    log('YJS disconnected', 'warning');
+                }
+            });
+            
+            provider.on('connection-error', (err) => {
+                log(`YJS error: ${err}`, 'error');
+            });
+            
+            // Create editor
+            const editor = monaco.editor.create(
+                document.getElementById("editor"),
+                { 
+                    value: `// Collaborative Editor - Room: ${ROOM}\n// Start typing...\n\n`, 
+                    language: "javascript", 
+                    theme: "vs-dark",
+                    automaticLayout: true,
+                    fontSize: 14,
+                    minimap: { enabled: true }
+                }
+            );
+            
+            log('✓ Editor created!', 'success');
+            
+            // Sync logic
+            let isLocalChange = false;
+            
+            ytext.observe(() => {
+                if (isLocalChange) return;
+                const remoteText = ytext.toString();
+                if (remoteText !== editor.getValue()) {
+                    const pos = editor.getPosition();
+                    editor.setValue(remoteText);
+                    if (pos) editor.setPosition(pos);
+                }
+            });
+            
+            editor.onDidChangeModelContent(() => {
+                const localText = editor.getValue();
+                if (localText !== ytext.toString()) {
+                    isLocalChange = true;
+                    ytext.delete(0, ytext.length);
+                    ytext.insert(0, localText);
+                    isLocalChange = false;
+                }
+            });
+            
+            log('System ready! 🚀', 'success');
+            
+            // Hide status after 5 seconds
+            setTimeout(() => {
+                const statusEl = document.getElementById('status');
+                statusEl.style.transition = 'opacity 1s';
+                statusEl.style.opacity = '0.2';
+                statusEl.style.pointerEvents = 'none';
+            }, 5000);
+            
+        } catch (err) {
+            log(`Setup: ${err.message}`, 'error');
+        }
+    }, (err) => {
+        log(`Monaco failed: ${err}`, 'error');
+    });
 }
 </script>
 
