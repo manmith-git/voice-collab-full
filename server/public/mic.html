@@ -5,7 +5,10 @@
 <body>
 <h3>Mic Active</h3>
 
-<script src="https://cdn.jsdelivr.net/npm/socket.io-client/dist/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/yjs@13.6.8/dist/yjs.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/y-websocket@1.5.0/dist/y-websocket.js"></script>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
 <script>
 const SERVER = "https://voice-collab-room.onrender.com";
 const ROOM = new URLSearchParams(location.search).get("room") || "default";
