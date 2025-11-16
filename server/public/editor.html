@@ -10,6 +10,7 @@
 <script src="https://cdn.jsdelivr.net/npm/y-websocket@1.5.0/dist/y-websocket.js"></script>
 
 
+
 <style>
 html,body,#editor { height:100%; margin:0; padding:0; }
 </style>
@@ -71,9 +72,10 @@ require.config({
 
 require(["vs/editor/editor.main"], function(){
     const ydoc = new Y.Doc();
-    const provider = new window.YWebsocket.WebsocketProvider(
-        SERVER.replace("https", "wss") + "/yjs", ROOM, ydoc
-    );
+    const provider = new window.yws.WebsocketProvider(
+    SERVER.replace("https", "wss") + "/yjs", ROOM, ydoc
+);
+
     const ytext = ydoc.getText("code");
 
     const editor = monaco.editor.create(
