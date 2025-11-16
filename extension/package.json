@@ -1,15 +1,97 @@
-
 {
   "name": "voicecollab",
-  "displayName": "Voice Collaboration",
+  "displayName": "Voice Collaboration - Code & Chat Together",
+  "description": "Real-time collaborative coding with voice chat. Host shares files, participants can edit together.",
   "version": "1.0.0",
-  "publisher": "you",
-  "engines": { "vscode": "^1.50.0" },
+  "publisher": "your-name",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/voice-collab-extension"
+  },
+  "engines": { 
+    "vscode": "^1.50.0" 
+  },
+  "categories": [
+    "Other",
+    "Education",
+    "Collaboration"
+  ],
+  "keywords": [
+    "collaboration",
+    "voice",
+    "pair programming",
+    "real-time",
+    "teamwork"
+  ],
+  "icon": "icon.png",
   "main": "src/extension.js",
-  "activationEvents": ["onCommand:voicecollab.start"],
+  "activationEvents": [
+    "onCommand:voicecollab.startHost",
+    "onCommand:voicecollab.joinSession",
+    "onCommand:voicecollab.showMenu"
+  ],
   "contributes": {
     "commands": [
-      { "command": "voicecollab.start", "title": "Start Voice Collab" }
+      {
+        "command": "voicecollab.startHost",
+        "title": "Start Hosting Session",
+        "category": "Voice Collab",
+        "icon": "$(broadcast)"
+      },
+      {
+        "command": "voicecollab.joinSession",
+        "title": "Join Session",
+        "category": "Voice Collab",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "voicecollab.showMenu",
+        "title": "Show Menu",
+        "category": "Voice Collab"
+      }
+    ],
+    "configuration": {
+      "title": "Voice Collab",
+      "properties": {
+        "voicecollab.serverUrl": {
+          "type": "string",
+          "default": "https://voice-collab-room.onrender.com",
+          "description": "Server URL for collaboration"
+        },
+        "voicecollab.autoShareActiveFile": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically share the active file when switching tabs (Host only)"
+        },
+        "voicecollab.autoJoinVoice": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically open microphone when starting/joining session"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "voicecollab.startHost",
+        "key": "ctrl+shift+v h",
+        "mac": "cmd+shift+v h"
+      },
+      {
+        "command": "voicecollab.joinSession",
+        "key": "ctrl+shift+v j",
+        "mac": "cmd+shift+v j"
+      }
     ]
+  },
+  "scripts": {
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.8.1",
+    "yjs": "^13.6.27"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.50.0",
+    "vsce": "^2.15.0"
   }
 }

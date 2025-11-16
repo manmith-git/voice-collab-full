@@ -32,6 +32,17 @@ io.on("connection", socket => {
     });
   });
   
+  // Handle file sharing from VS Code extension
+  socket.on("share-file", (data) => {
+    console.log(`File shared in room ${data.room}: ${data.filename}`);
+    socket.to(data.room).emit("file-shared", {
+      filename: data.filename,
+      content: data.content,
+      language: data.language,
+      from: socket.id
+    });
+  });
+  
   socket.on("disconnect", () => {
     console.log("Socket.IO client disconnected:", socket.id);
   });
