@@ -50,7 +50,8 @@ server.on('upgrade', (request, socket, head) => {
   
   console.log(`WebSocket upgrade request for: ${pathname}`);
   
-  if (pathname === '/yjs') {
+  // Accept /yjs or /yjs/* paths
+  if (pathname === '/yjs' || pathname.startsWith('/yjs/')) {
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit('connection', ws, request);
     });
@@ -64,9 +65,20 @@ wss.on("connection", (ws, req) => {
   console.log("YJS client connected");
   
   try {
-    // Parse room from URL
+    // Parse room from URL path or query
     const url = new URL(req.url, `http://${req.headers.host}`);
-    const roomName = url.searchParams.get("room") || "default";
+    const pathname = url.pathname;
+    
+    // Room can be in path (/yjs/roomname) or query (?room=roomname)
+    let roomName = url.searchParams.get("room");
+    
+    if (!roomName && pathname.startsWith('/yjs/')) {
+      roomName = pathname.substring(5); // Remove '/yjs/' prefix
+    }
+    
+    if (!roomName) {
+      roomName = "default";
+    }
     
     console.log(`Room: ${roomName}`);
     
