@@ -1,11 +1,8 @@
-
 <!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
 <title>Editor</title>
-<!-- MONACO (Stable Version) -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.1/min/vs/loader.min.js"></script>
 
 <!-- SOCKET.IO from your server -->
 <script src="/socket.io/socket.io.js"></script>
@@ -16,18 +13,12 @@
 <!-- Y-WEBSOCKET -->
 <script src="https://cdn.jsdelivr.net/npm/y-websocket@1.5.0/dist/y-websocket.js"></script>
 
-<script>
-require.config({
-  paths: {
-    vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.34.1/min/vs"
-  }
-});
-</script>
-
-
+<!-- MONACO (Stable Version) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
 
 <style>
-html,body,#editor { height:100%; margin:0; padding:0; }
+html, body { height: 100%; margin: 0; padding: 0; }
+#editor { height: 100%; }
 </style>
 </head>
 
@@ -35,81 +26,131 @@ html,body,#editor { height:100%; margin:0; padding:0; }
 <div id="editor"></div>
 
 <script>
-const SERVER = "https://voice-collab-room.onrender.com";
+// Configuration
+const SERVER = window.location.origin; // Use current origin instead of hardcoded
 const ROOM = new URLSearchParams(location.search).get("room") || "default";
 
+// Socket.IO setup
 const socket = io(SERVER);
 socket.emit("join-room", ROOM);
 
-const pc = new RTCPeerConnection({ iceServers:[{ urls:"stun:stun.l.google.com:19302" }] });
+// WebRTC setup
+const pc = new RTCPeerConnection({ 
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }] 
+});
 
-pc.ontrack = function(e){
+pc.ontrack = function(e) {
     let audio = new Audio();
     audio.srcObject = e.streams[0];
     audio.play();
 };
 
-pc.onicecandidate = function(e){
-    if(e.candidate){
-        socket.emit("signal", { to: window.peerId, signal: { ice: e.candidate } });
+pc.onicecandidate = function(e) {
+    if (e.candidate) {
+        socket.emit("signal", { 
+            to: window.peerId, 
+            signal: { ice: e.candidate } 
+        });
     }
 };
 
-socket.on("signal", async function(data){
+socket.on("signal", async function(data) {
     let from = data.from;
     let signal = data.signal;
     window.peerId = from;
 
-    if(signal.sdp){
+    if (signal.sdp) {
         await pc.setRemoteDescription(signal.sdp);
-        if(signal.sdp.type === "offer"){
+        if (signal.sdp.type === "offer") {
             let ans = await pc.createAnswer();
             await pc.setLocalDescription(ans);
-            socket.emit("signal", { to: from, signal: { sdp: ans } });
+            socket.emit("signal", { 
+                to: from, 
+                signal: { sdp: ans } 
+            });
         }
     }
 
-    if(signal.ice){
+    if (signal.ice) {
         await pc.addIceCandidate(signal.ice);
     }
 });
 
-socket.on("user-joined", async function(id){
+socket.on("user-joined", async function(id) {
     window.peerId = id;
     let offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    socket.emit("signal", { to: id, signal: { sdp: offer } });
+    socket.emit("signal", { 
+        to: id, 
+        signal: { sdp: offer } 
+    });
 });
 
+// Monaco Editor setup (SINGLE require.config)
 require.config({
-  paths: { vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs" }
+    paths: { 
+        vs: "https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs" 
+    }
 });
 
-require(["vs/editor/editor.main"], function(){
+require(["vs/editor/editor.main"], function() {
+    console.log("Monaco loaded successfully");
+    
+    // Create YJS document
     const ydoc = new Y.Doc();
-    const provider = new window.yws.WebsocketProvider(
-    SERVER.replace("https", "wss") + "/yjs", ROOM, ydoc
-);
-
+    
+    // Determine WebSocket URL
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${window.location.host}/yjs`;
+    
+    console.log("Connecting to YJS at:", wsUrl);
+    
+    // Create WebSocket provider - CORRECT namespace
+    const provider = new Y.WebsocketProvider(wsUrl, ROOM, ydoc);
+    
+    provider.on('status', event => {
+        console.log('YJS connection status:', event.status);
+    });
+    
     const ytext = ydoc.getText("code");
 
+    // Create Monaco editor
     const editor = monaco.editor.create(
         document.getElementById("editor"),
-        { value:"", language:"javascript", theme:"vs-dark" }
+        { 
+            value: "", 
+            language: "javascript", 
+            theme: "vs-dark",
+            automaticLayout: true
+        }
     );
+    
+    console.log("Monaco editor created");
 
-    ytext.observe(function(){
+    // Sync YJS changes to Monaco
+    let isLocalChange = false;
+    
+    ytext.observe(function() {
+        if (isLocalChange) return;
+        
         let txt = ytext.toString();
-        if(txt !== editor.getValue()){
+        if (txt !== editor.getValue()) {
+            const position = editor.getPosition();
             editor.setValue(txt);
+            if (position) {
+                editor.setPosition(position);
+            }
         }
     });
 
-    editor.onDidChangeModelContent(function(){
+    // Sync Monaco changes to YJS
+    editor.onDidChangeModelContent(function() {
         let v = editor.getValue();
-        if(v !== ytext.toString()){
+        if (v !== ytext.toString()) {
+            isLocalChange = true;
             ytext.delete(0, ytext.length);
             ytext.insert(0, v);
+            isLocalChange = false;
         }
     });
 });
