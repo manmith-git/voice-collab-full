@@ -26,9 +26,7 @@
   "icon": "icon.png",
   "main": "src/extension.js",
   "activationEvents": [
-    "onCommand:voicecollab.startHost",
-    "onCommand:voicecollab.joinSession",
-    "onCommand:voicecollab.showMenu"
+    "*"
   ],
   "contributes": {
     "commands": [

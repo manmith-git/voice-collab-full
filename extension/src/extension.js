@@ -1,12 +1,10 @@
 const vscode = require('vscode');
-const io = require('socket.io-client');
-const Y = require('yjs');
 
 let currentSession = null;
 let statusBarItem = null;
 
 function activate(context) {
-  console.log('Voice Collab extension activated');
+  console.log('Voice Collab extension is now active');
 
   // Create status bar item
   statusBarItem = vscode.window.createStatusBarItem(
@@ -16,6 +14,7 @@ function activate(context) {
   statusBarItem.text = "$(broadcast-off) Voice Collab";
   statusBarItem.command = 'voicecollab.showMenu';
   statusBarItem.show();
+  context.subscriptions.push(statusBarItem);
 
   // Show menu command
   context.subscriptions.push(
